@@ -1,23 +1,45 @@
-from fx_mc_pricer.mc import compare_to_bs, price_forward_mc
+from math import sqrt
+from fx_mc_pricer.mc import price_european_mc
+from fx_mc_pricer.bs_closed_form import bs_price_fx
 
 
-def main():
-    S0, K, T, r_d, r_f, sigma = 100.0, 100.0, 1.0, 0.03, 0.01, 0.20
-    cfg = dict(n_paths=200_000, steps=1, antithetic=True, seed=7)
+S0 = 120.0
+K = 120.0
+T = 1.0
+r_d = 0.005
+r_f = 0.05
+sigma = 0.10
+otype = "call"      # or "put"
+n_paths = 10_000
+seed = 7
 
-    print("European CALL (MC vs BS):")
-    res = compare_to_bs(S0, K, T, r_d, r_f, sigma, otype="call", **cfg)
-    print(f"  MC: {res['mc']:.6f}  BS: {res['bs']:.6f}  |  abs err: {res['abs_err']:.6f}  (SE: {res['se']:.6f})  paths={res['meta']['paths']}")
+configs = [
+    (1, False, "1 step, no antithetic"),
+    (1, True,  "1 step, antithetic"),
+    (2, False, "2 steps, no antithetic"),
+    (2, True,  "2 steps, antithetic"),
+]
 
-    print("\nEuropean PUT (MC vs BS):")
-    res = compare_to_bs(S0, K, T, r_d, r_f, sigma, otype="put", **cfg)
-    print(f"  MC: {res['mc']:.6f}  BS: {res['bs']:.6f}  |  abs err: {res['abs_err']:.6f}  (SE: {res['se']:.6f})  paths={res['meta']['paths']}")
+bs = bs_price_fx(S0, K, T, r_d, r_f, sigma, otype=otype)
 
-    print("\nForward PV (MC vs closed-form):")
-    pf, se_f, meta_f = price_forward_mc(S0, K, T, r_d, r_f, sigma, **cfg)
-    pv_cf = (S0 * (2.718281828459045**(-r_f*T)) - K * (2.718281828459045**(-r_d*T)))
-    print(f"  MC PV: {pf:.6f}  Closed-form PV: {pv_cf:.6f}  |  (SE: {se_f:.6f})  paths={meta_f['paths']}")
+rows = []
+baseline_var = None
+for steps, anti, label in configs:
+    price, se, meta = price_european_mc(
+        S0, K, T, r_d, r_f, sigma, otype=otype,
+        n_paths=n_paths, steps=steps, antithetic=anti, seed=seed
+    )
+    var = meta["variance"]
+    if baseline_var is None:
+        baseline_var = var
+    vr = var / baseline_var  # variance ratio vs baseline
+    lo, hi = price - 1.96*se, price + 1.96*se
+    rows.append((label, steps, anti, price, se, lo, hi, vr, meta["paths"]))
 
-
-if __name__ == "__main__":
-    main()
+# Pretty print
+print(f"FX {otype.upper()} — MC vs BS (S0={S0}, K={K}, T={T}, r_d={r_d}, r_f={r_f}, sigma={sigma})\n")
+print(f"Black–Scholes: {bs:.6f}\n")
+print("Configuration                     Price       SE       95% CI low   95% CI high   Var Ratio   Paths")
+print("-"*100)
+for label, steps, anti, price, se, lo, hi, vr, paths in rows:
+    print(f"{label:30s}  {price:9.6f}  {se:8.6f}  {lo:12.6f}   {hi:12.6f}    {vr:9.4f}   {paths:7d}")
